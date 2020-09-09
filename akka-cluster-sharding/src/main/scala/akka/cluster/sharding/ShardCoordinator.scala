@@ -556,6 +556,8 @@ abstract class ShardCoordinator(
   var aliveRegions = Set.empty[ActorRef]
   var regionTerminationInProgress = Set.empty[ActorRef]
 
+  private def calculateActiveRegions() = (state.regions -- gracefulShutdownInProgress) -- regionTerminationInProgress
+
   import context.dispatcher
   val rebalanceTask =
     context.system.scheduler.scheduleWithFixedDelay(rebalanceInterval, rebalanceInterval, self, RebalanceTick)
@@ -624,7 +626,7 @@ abstract class ShardCoordinator(
       case GetShardHome(shard) =>
         if (!handleGetShardHome(shard)) {
           // location not know, yet
-          val activeRegions = (state.regions -- gracefulShutdownInProgress) -- regionTerminationInProgress
+          val activeRegions = calculateActiveRegions()
           if (activeRegions.nonEmpty) {
             val getShardHomeSender = sender()
             val regionFuture = allocationStrategy.allocateShard(getShardHomeSender, shard, activeRegions)
@@ -719,7 +721,11 @@ abstract class ShardCoordinator(
             case Some(shards) =>
               log.debug("Graceful shutdown of region [{}] with shards [{}]", region, shards)
               gracefulShutdownInProgress += region
-              continueRebalance(shards.toSet)
+
+              // only for rebalance if we have at least one active region
+              if (calculateActiveRegions().size > 1)
+                continueRebalance(shards.toSet)
+
             case None =>
               log.debug("Unknown region requested graceful shutdown [{}]", region)
           }
